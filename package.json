@@ -1,0 +1,20 @@
+{
+  "name": "whast-bot",
+  "version": "1.0.0",
+  "description": "Whatsapp web chat bot",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "whatsapp"
+  ],
+  "author": "pratamaid",
+  "license": "ISC",
+  "dependencies": {
+    "mysql2": "^3.11.0",
+    "qrcode-terminal": "^0.12.0",
+    "whatsapp-web.js": "^1.25.0"
+  }
+}
