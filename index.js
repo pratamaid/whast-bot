@@ -186,10 +186,25 @@ client.on("message", (msg) => {
 
               // Perbarui state pengguna
               updateUserState(phoneNumber, nextState, () => {
-                if (nextState === "end_fix") {
+                if (nextState === "end_fix" || nextState === "the_end") {
                   saveHistory(phoneNumber, () => {
                     console.log(`Session for ${phoneNumber} saved.`);
+                    db.query(
+                      `UPDATE users SET current_state = 'start' WHERE phone_number = ?`,
+                      [phoneNumber],
+                      (err) => {
+                        if (err) throw err;
+                      }
+                    );
                   });
+                } else if (currentState === "initial") {
+                  db.query(
+                    `UPDATE users SET name = ? WHERE phone_number = ?`,
+                    [msg.body, phoneNumber],
+                    (err) => {
+                      if (err) throw err;
+                    }
+                  );
                 }
               });
             });
