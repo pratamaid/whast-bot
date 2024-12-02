@@ -64,18 +64,37 @@ function getNextState(currentState, userInput, callback) {
 // Save session data to history table
 function saveHistory(phoneNumber, callback) {
   db.query(
-    "SELECT name FROM users WHERE phone_number = ?",
+    "SELECT name, session_data FROM users WHERE phone_number = ?",
     [phoneNumber],
     (err, results) => {
+      var date = new Date();
+      var current_date =
+        date.getFullYear() + "-" + (date.getMonth() + 1) + "-" + date.getDate();
+      var current_time =
+        date.getHours() + ":" + date.getMinutes() + ":" + date.getSeconds();
+      var datetime = current_date + " " + current_time;
+
       if (err) throw err;
       if (results.length > 0) {
         const name = results[0].name;
+        const sessionData = results[0].session_data;
+
+        // Simpan sesi ke tabel history
         db.query(
-          "INSERT INTO history (phone_number, name, session_data) VALUES (?, ?, ?)",
-          [phoneNumber, name, JSON.stringify(results)],
+          "INSERT INTO history (phone_number, name, session_data, date) VALUES (?, ?, ?, ?)",
+          [phoneNumber, name, sessionData, datetime],
           (err) => {
             if (err) throw err;
-            if (callback) callback(); // Execute callback after history is saved
+
+            // Bersihkan data sesi di tabel users
+            db.query(
+              "UPDATE users SET session_data = NULL WHERE phone_number = ?",
+              [phoneNumber],
+              (err) => {
+                if (err) throw err;
+                if (callback) callback(); // Callback setelah data disimpan
+              }
+            );
           }
         );
       }
@@ -95,6 +114,36 @@ function updateUserState(phoneNumber, newState, callback) {
   );
 }
 
+function updateSessionData(phoneNumber, userMessage, botResponse, callback) {
+  db.query(
+    "SELECT session_data FROM users WHERE phone_number = ?",
+    [phoneNumber],
+    (err, results) => {
+      if (err) throw err;
+
+      let sessionData = [];
+
+      // Jika data sesi ada, parse JSON-nya
+      if (results.length > 0 && results[0].session_data) {
+        sessionData = JSON.parse(results[0].session_data);
+      }
+
+      // Tambahkan pesan dan respons baru ke data sesi
+      sessionData.push({ userMessage, botResponse });
+
+      // Perbarui data sesi di database
+      db.query(
+        "UPDATE users SET session_data = ? WHERE phone_number = ?",
+        [JSON.stringify(sessionData), phoneNumber],
+        (err) => {
+          if (err) throw err;
+          if (callback) callback(); // Callback setelah data diperbarui
+        }
+      );
+    }
+  );
+}
+
 // Insert new user into database and send initial state message
 function insertNewUserAndSendInitialMessage(phoneNumber, callback) {
   const initialState = "initial";
@@ -103,69 +152,57 @@ function insertNewUserAndSendInitialMessage(phoneNumber, callback) {
     [phoneNumber, initialState],
     (err) => {
       if (err) throw err;
-      // Fetch and send the initial state message after inserting the new user
       getStateMessage(initialState, (message) => {
         client.sendMessage(phoneNumber, message);
-        callback(initialState); // Ensure the callback carries the initial state
+        callback(initialState);
       });
     }
   );
 }
 
-// Handle incoming messages
 client.on("message", (msg) => {
   const phoneNumber = msg.from;
 
-  // Cek apakah pesan berasal dari grup/komunitas (bukan dari nomor pribadi)
   if (msg.fromMe || msg.isGroupMsg) {
-    console.log("Pesan dari grup atau saluran, abaikan.");
-    return; // Jangan memproses pesan dari grup atau saluran
+    return;
   }
 
-  // Check if the user already exists in the database
   db.query(
-    "SELECT current_state, name FROM users WHERE phone_number = ?",
+    "SELECT current_state FROM users WHERE phone_number = ?",
     [phoneNumber],
     (err, results) => {
       if (err) throw err;
 
       if (results.length > 0) {
-        // User exists, proceed with the current state
         const currentState = results[0].current_state;
-        const userName = results[0].name;
 
-        if (currentState === "end") {
-          // Save session to history, reset state to initial, and start again
-          saveHistory(phoneNumber, () => {
-            updateUserState(phoneNumber, "initial", () => {
-              getStateMessage("initial", (message) => {
-                client.sendMessage(phoneNumber, message);
+        getNextState(currentState, msg.body, (nextState) => {
+          if (nextState) {
+            getStateMessage(nextState, (botResponse) => {
+              // Simpan pesan dan respons ke sesi
+              updateSessionData(phoneNumber, msg.body, botResponse, () => {
+                client.sendMessage(phoneNumber, botResponse);
+              });
+
+              // Perbarui state pengguna
+              updateUserState(phoneNumber, nextState, () => {
+                if (nextState === "end_fix") {
+                  saveHistory(phoneNumber, () => {
+                    console.log(`Session for ${phoneNumber} saved.`);
+                  });
+                }
               });
             });
-          });
-        } else {
-          // Process the current state and the user's input
-          getNextState(currentState, msg.body, (nextState) => {
-            if (nextState) {
-              // Transition to the next state and send the corresponding message
-              updateUserState(phoneNumber, nextState, () => {
-                getStateMessage(nextState, (message) => {
-                  client.sendMessage(phoneNumber, message);
-                });
-              });
-            } else {
-              // If no valid transition found, inform the user
-              client.sendMessage(
-                phoneNumber,
-                "Maaf, saya tidak mengerti input Anda."
-              );
-            }
-          });
-        }
+          } else {
+            client.sendMessage(
+              phoneNumber,
+              "Maaf, saya tidak mengerti input Anda."
+            );
+          }
+        });
       } else {
-        // User does not exist, insert new user and send initial message
-        insertNewUserAndSendInitialMessage(phoneNumber, (initialState) => {
-          // User inserted and initial message sent, nothing more to do
+        insertNewUserAndSendInitialMessage(phoneNumber, () => {
+          console.log("New user initialized.");
         });
       }
     }
