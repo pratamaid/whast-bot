@@ -9,9 +9,9 @@ const {
   getNextState,
   updateUserState,
 } = require("./utils/getStateMessage");
-const { insertNewUserAndSendInitialMessage } = require("./utils/insertNewUser");
 const { saveHistory } = require("./utils/saveHistory");
 const { updateSessionData } = require("./utils/updateSessionData");
+const { resetState } = require("./utils/resetState");
 
 const port = 8080;
 
@@ -41,6 +41,21 @@ client.on("message", (msg) => {
 
   if (msg.fromMe || msg.isGroupMsg) {
     return;
+  }
+
+  function insertNewUserAndSendInitialMessage(phoneNumber, callback) {
+    const initialState = "initial";
+    db.query(
+      "INSERT INTO users (phone_number, current_state) VALUES (?, ?)",
+      [phoneNumber, initialState],
+      (err) => {
+        if (err) throw err;
+        getStateMessage(initialState, (message) => {
+          client.sendMessage(phoneNumber, message);
+          callback(initialState);
+        });
+      }
+    );
   }
 
   db.query(
@@ -79,6 +94,14 @@ client.on("message", (msg) => {
                       if (err) throw err;
                     }
                   );
+                } else if (currentState === "problem") {
+                  db.query(
+                    `UPDATE users SET problem = ? WHERE phone_number = ?`,
+                    [nextState, phoneNumber],
+                    (err) => {
+                      if (err) throw err;
+                    }
+                  );
                 }
               });
             });
@@ -98,6 +121,7 @@ client.on("message", (msg) => {
   );
 });
 
+resetState();
 client.initialize();
 
 io.on("connection", function (socket) {
